@@ -1,10 +1,20 @@
 import 'dart:io';
 
 import 'package:localsend_app/provider/network/server/server_utils.dart';
+import 'package:localsend_app/util/pin_guard.dart';
 import 'package:localsend_app/util/simple_server.dart';
 
 /// Responds with 401 or 429 if the pin is invalid or too many attempts.
 /// Returns true if the pin is correct, or if no pin is set.
+///
+/// Security notes (K7):
+/// - PIN comparison is constant-time (see `pin_guard.dart`) to avoid a timing
+///   side-channel.
+/// - Every rejected attempt is counted, including an empty/missing PIN, so an
+///   attacker cannot probe indefinitely by omitting the PIN.
+/// - `request.ip` is the TCP peer address from the socket
+///   (`connectionInfo.remoteAddress`), not a parsed `X-Forwarded-For`, so it
+///   cannot be spoofed by a header.
 Future<bool> checkPin({
   required ServerUtils server,
   required String? pin,
@@ -19,15 +29,19 @@ Future<bool> checkPin({
     }
 
     final requestPin = request.uri.queryParameters['pin'];
-    if (requestPin != pin) {
-      if (requestPin?.isNotEmpty ?? false) {
-        pinAttempts[request.ip] = attempts + 1;
+    final result = evaluatePinAttempt(
+      configuredPin: pin,
+      requestPin: requestPin,
+      attempts: attempts,
+    );
 
-        if (attempts == 2) {
-          // it was 2 before incrementing
-          await request.respondJson(429, message: 'Too many attempts.');
-          return false;
-        }
+    if (!result.allowed) {
+      // Count every failure, including an empty/missing PIN.
+      pinAttempts[request.ip] = attempts + 1;
+
+      if (result.locked) {
+        await request.respondJson(429, message: 'Too many attempts.');
+        return false;
       }
       await request.respondJson(401, message: 'Invalid pin.');
       return false;

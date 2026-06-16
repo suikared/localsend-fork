@@ -233,21 +233,26 @@ Future<(String, String?, String)> digestFilePathAndPrepareDirectory({
     return (destinationUri, documentUri, p.basename(fileName));
   }
 
-  final actualFileName = legalizeFilename(p.basename(fileName), os: Platform.operatingSystem);
-  final fileNameParts = p.split(fileName);
-  final dir = p.joinAll([parentDirectory, ...fileNameParts.take(fileNameParts.length - 1)]);
+  // ponytail: normalize 后 isWithin，对所有 fileName 生效。
+  // 旧逻辑仅在校验 `fileNameParts.length > 1` 时检查穿越，导致单段 `..`（length==1）被跳过，
+  // 恶意对端可落盘到任意目录。
+  final target = p.normalize(p.join(parentDirectory, fileName));
+  if (!p.isWithin(parentDirectory, target)) {
+    throw 'Path traversal detected';
+  }
 
-  if (fileNameParts.length > 1) {
-    // Check path traversal
-    if (!p.isWithin(parentDirectory, dir)) {
-      throw 'Path traversal detected';
-    }
+  final baseName = p.basename(target);
+  if (baseName.isEmpty || baseName == '.' || baseName == '..') {
+    throw 'Path traversal detected';
+  }
 
-    try {
-      Directory(dir).createSync(recursive: true);
-    } catch (e) {
-      _logger.warning('Could not create directory', e);
-    }
+  final actualFileName = legalizeFilename(baseName, os: Platform.operatingSystem);
+  final dir = p.dirname(target);
+
+  try {
+    Directory(dir).createSync(recursive: true);
+  } catch (e) {
+    _logger.warning('Could not create directory', e);
   }
 
   String destinationPath;

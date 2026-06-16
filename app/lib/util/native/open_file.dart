@@ -6,6 +6,43 @@ import 'package:localsend_app/widget/dialogs/cannot_open_file_dialog.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+/// Extensions that the OS would *execute* (or treat as a launcher/shortcut)
+/// rather than open with a viewer. Auto-opening a received file of one of these
+/// types after a zero-interaction quickSave (H3) is a code-execution risk, so
+/// the quickSave auto-open flow must skip them.
+const executableExtensions = <String>{
+  '.exe',
+  '.bat',
+  '.cmd',
+  '.com',
+  '.lnk',
+  '.msi',
+  '.ps1',
+  '.scr',
+  '.sh',
+  '.command',
+  '.app',
+  '.jar',
+  // Windows scripting / system entry-points that run on double-click.
+  '.vbs',
+  '.vbe',
+  '.hta',
+  '.wsf',
+  '.wsh',
+  '.cpl',
+  '.reg',
+  '.inf',
+  // Linux launchers / portable apps.
+  '.desktop',
+  '.appimage',
+};
+
+/// Returns true if [filePath] has an executable/launcher extension.
+bool isExecutableFile(String filePath) {
+  final lower = filePath.toLowerCase();
+  return executableExtensions.any((ext) => lower.endsWith(ext));
+}
+
 /// Opens the selected file which is stored on the device.
 Future<void> openFile(
   BuildContext context,

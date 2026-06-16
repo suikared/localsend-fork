@@ -40,9 +40,11 @@ import 'package:localsend_app/provider/selection/selected_sending_files_provider
 import 'package:localsend_app/provider/settings_provider.dart';
 import 'package:localsend_app/util/native/directories.dart';
 import 'package:localsend_app/util/native/file_saver.dart';
+import 'package:localsend_app/util/native/open_file.dart';
 import 'package:localsend_app/util/native/platform_check.dart';
 import 'package:localsend_app/util/native/tray_helper.dart';
 import 'package:localsend_app/util/rust.dart';
+import 'package:localsend_app/util/security_helper.dart';
 import 'package:localsend_app/util/simple_server.dart';
 import 'package:localsend_app/widget/dialogs/open_file_dialog.dart';
 import 'package:logging/logging.dart';
@@ -55,6 +57,28 @@ import 'package:window_manager/window_manager.dart';
 const _uuid = Uuid();
 
 final _logger = Logger('ReceiveController');
+
+/// Returns the SHA-256(DER) hash of the peer's TLS certificate, or null when
+/// the connection is not HTTPS or the peer did not present a certificate.
+///
+/// This is the same scheme used for the device fingerprint
+/// (`calculateHashOfCertificate`), so it is directly comparable to a favorite's
+/// stored `fingerprint`. Used to bind a quickSaveFromFavorites auto-accept to a
+/// cryptographically verified identity instead of a body-declared fingerprint.
+String? _verifiedPeerFingerprint(HttpRequest request, bool https) {
+  if (!https) return null;
+  final cert = request.certificate;
+  if (cert == null) return null;
+  // A malformed peer PEM would otherwise throw out of the request handler
+  // (unhandled async error / dropped connection). Treat it as "unverified"
+  // and fall through to the normal confirmation flow. See K9-H2.
+  try {
+    return calculateHashOfCertificate(cert.pem);
+  } on FormatException catch (e) {
+    _logger.warning('Could not hash peer certificate, ignoring', e);
+    return null;
+  }
+}
 
 /// Handles all requests for receiving files.
 class ReceiveController {
@@ -262,8 +286,18 @@ class ReceiveController {
     bool quickSave = settings.quickSave && server.getState().session?.message == null;
     final quickSaveFromFavorites = settings.quickSaveFromFavorites && server.getState().session?.message == null;
     if (quickSaveFromFavorites) {
-      final bool isFavorite = server.ref.read(favoritesProvider).any((e) => e.fingerprint == dto.info.fingerprint);
-      if (isFavorite) {
+      // K9: dto.info.fingerprint is a plaintext, body-declared value and is
+      // spoofable (e.g. learned from a plaintext broadcast on shared Wi-Fi).
+      // Auto-accept a favorite only when its stored certificate hash matches the
+      // peer's *verified* TLS certificate — i.e. the peer actually proved
+      // possession of that certificate's private key in the handshake — never on
+      // the declared fingerprint alone. When no peer certificate is available
+      // (plain HTTP, or the server does not request client certs) we refuse to
+      // auto-accept and fall through to the normal confirmation flow.
+      final verifiedFingerprint = _verifiedPeerFingerprint(request, https);
+      final bool isVerifiedFavorite =
+          verifiedFingerprint != null && server.ref.read(favoritesProvider).any((e) => e.fingerprint == verifiedFingerprint);
+      if (isVerifiedFavorite) {
         quickSave = true;
       }
     }
@@ -616,7 +650,9 @@ class ReceiveController {
           Routerino.context.pushRootImmediately(() => const HomePage(initialTab: HomeTab.receive, appStart: false));
 
           // open the dialog to open file instantly
-          if (filePath != null && filePath.isNotEmpty) {
+          // H3: never auto-prompt to open an executable/launcher after a
+          // zero-interaction quickSave — the user should open it deliberately.
+          if (filePath != null && filePath.isNotEmpty && !isExecutableFile(filePath)) {
             // ignore: discarded_futures
             OpenFileDialog.open(
               Routerino.context, // ignore: use_build_context_synchronously
