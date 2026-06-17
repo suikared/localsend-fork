@@ -60,12 +60,16 @@ class RhttpWrapper implements CustomHttpClient {
         length: int.parse(headers['Content-Length']!),
       ),
       onSendProgress: (curr, total) {
-        onSendProgress(curr / total);
+        onSendProgress(safeProgress(curr, total));
       },
       cancelToken: token,
     );
   }
 }
+
+/// Upload progress as a fraction in [0, 1]. Zero-length streams report 1.0
+/// instead of dividing by zero (empty-file uploads).
+double safeProgress(int curr, int total) => total == 0 ? 1.0 : curr / total;
 
 RhttpClient createRhttpClient(Duration timeout, StoredSecurityContext securityContext, {Interceptor? interceptor}) {
   return RhttpClient.createSync(

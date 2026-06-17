@@ -244,6 +244,11 @@ Stream<R> _convertResponseToStream<R, T>({
       } else if (result.done) {
         if (result.error != null) {
           controller.addError(result.error!);
+          // ponytail: symmetric with the success branch — close the stream and
+          // release the broadcast listener, otherwise every failed task leaks a
+          // subscription and the stream never completes.
+          subscription.cancel(); // ignore: discarded_futures
+          controller.close(); // ignore: discarded_futures
         } else {
           subscription.cancel(); // ignore: discarded_futures
           controller.close(); // ignore: discarded_futures

@@ -13,6 +13,18 @@ import 'package:path/path.dart' as p;
 import 'package:saf_stream/saf_stream.dart';
 import 'package:saf_stream/saf_stream_platform_interface.dart';
 
+/// Thrown when an incoming file name escapes the destination directory.
+/// Typed so callers can distinguish traversal attempts from ordinary IO errors
+/// (a bare `throw '...'` loses its type and stack in generic catch blocks).
+class PathTraversalException implements Exception {
+  final String? target;
+  const PathTraversalException([this.target]);
+  @override
+  String toString() => target == null
+      ? 'PathTraversalException: file name escapes destination directory'
+      : 'PathTraversalException: $target escapes destination directory';
+}
+
 final _logger = Logger('FileSaver');
 
 final _saf = SafStream();
@@ -238,12 +250,12 @@ Future<(String, String?, String)> digestFilePathAndPrepareDirectory({
   // 恶意对端可落盘到任意目录。
   final target = p.normalize(p.join(parentDirectory, fileName));
   if (!p.isWithin(parentDirectory, target)) {
-    throw 'Path traversal detected';
+    throw PathTraversalException(target);
   }
 
   final baseName = p.basename(target);
   if (baseName.isEmpty || baseName == '.' || baseName == '..') {
-    throw 'Path traversal detected';
+    throw PathTraversalException(target);
   }
 
   final actualFileName = legalizeFilename(baseName, os: Platform.operatingSystem);
