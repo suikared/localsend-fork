@@ -81,20 +81,20 @@ impl LsHttpClient {
         protocol: http::dto::ProtocolType,
         ip: &str,
         port: u16,
-        public_key: Option<String>,
+        fingerprint: Option<String>,
         payload: http::dto::PrepareUploadRequestDto,
         pin: Option<&str>,
     ) -> Result<http::dto::PrepareUploadResult, ClientError> {
         match self {
             LsHttpClient::V2(client) => {
                 let result = client
-                    .prepare_upload(protocol, ip, port, public_key, payload.into(), pin)
+                    .prepare_upload(protocol, ip, port, fingerprint, payload.into(), pin)
                     .await?;
                 Ok(result.into())
             }
             LsHttpClient::V3(client) => {
                 client
-                    .prepare_upload(protocol, ip, port, public_key, payload)
+                    .prepare_upload(protocol, ip, port, fingerprint, payload)
                     .await
             }
         }
@@ -105,7 +105,7 @@ impl LsHttpClient {
         protocol: http::dto::ProtocolType,
         ip: &str,
         port: u16,
-        public_key: Option<String>,
+        fingerprint: Option<String>,
         session_id: &str,
         file_id: &str,
         token: &str,
@@ -115,14 +115,14 @@ impl LsHttpClient {
             LsHttpClient::V2(client) => {
                 client
                     .upload(
-                        protocol, ip, port, public_key, session_id, file_id, token, binary,
+                        protocol, ip, port, fingerprint, session_id, file_id, token, binary,
                     )
                     .await
             }
             LsHttpClient::V3(client) => {
                 client
                     .upload(
-                        protocol, ip, port, public_key, session_id, file_id, token, binary,
+                        protocol, ip, port, fingerprint, session_id, file_id, token, binary,
                     )
                     .await
             }
@@ -159,6 +159,43 @@ pub(super) fn create_reqwest_client(
         .danger_accept_invalid_certs(true)
         .tls_info(true)
         .identity(identity)
+        .build()?;
+
+    Ok(client)
+}
+
+/// Builds a reqwest client whose TLS handshake pins the peer to [expected_fingerprint]
+/// (lowercase SHA-256 hex of the peer's DER leaf cert — the LocalSend device
+/// `fingerprint`, advertised over multicast and carried by `Device.fingerprint`).
+///
+/// Unlike the TOFU client above, a MITM presenting a different certificate is rejected
+/// *during the handshake*, before any request body (PIN, file bytes) is transmitted.
+/// This is the core mitigation for C1-sec: request-side secrets are never sent to an
+/// unverified peer.
+///
+/// The LocalSend receiver does not request a client certificate, so none is configured
+/// here; the sender is authorized by IP binding and session token, not mTLS.
+pub(super) fn build_pinned_reqwest_client(
+    expected_fingerprint: &str,
+) -> Result<reqwest::Client, ClientError> {
+    let provider = std::sync::Arc::new(rustls::crypto::ring::default_provider());
+    let verifier: std::sync::Arc<dyn rustls::client::danger::ServerCertVerifier> =
+        std::sync::Arc::new(
+            crate::crypto::pinned_server_cert_verifier::PinnedServerCertVerifier::new(Some(
+                expected_fingerprint.to_string(),
+            )),
+        );
+
+    let client_config = rustls::ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .map_err(anyhow::Error::from)?
+        .dangerous()
+        .with_custom_certificate_verifier(verifier)
+        .with_no_client_auth();
+
+    let client = reqwest::Client::builder()
+        .use_preconfigured_tls(Some(client_config))
+        .tls_info(true)
         .build()?;
 
     Ok(client)

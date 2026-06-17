@@ -152,8 +152,11 @@ class SendNotifier extends Notifier<Map<String, SendSessionState>> {
           ip: target.ip!,
           port: target.port,
           payload: requestDto,
-          // TODO
-          publicKey: null,
+          // C1-sec: pin the TLS handshake to the peer's advertised fingerprint so a
+          // MITM cannot read the PIN carried in this request's query string. The
+          // Rust client rejects any cert whose SHA-256(DER) != target.fingerprint
+          // during the handshake, before the PIN is transmitted.
+          publicKey: target.fingerprint,
           pin: pin,
         );
       } on rust_http.RsHttpClientError_StatusCode catch (e) {

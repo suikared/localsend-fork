@@ -127,7 +127,7 @@ impl LsHttpClientV2 {
         protocol: ProtocolType,
         ip: &str,
         port: u16,
-        public_key: Option<String>,
+        fingerprint: Option<String>,
         payload: PrepareUploadRequestDtoV2,
         pin: Option<&str>,
     ) -> Result<PrepareUploadResultV2, ClientError> {
@@ -145,17 +145,23 @@ impl LsHttpClientV2 {
         }
         .to_string();
 
-        let res = self
-            .client
+        // When we know the peer's fingerprint, pin the TLS handshake to it so the
+        // PIN (sent in this request) is never transmitted to a MITM. Falls back to
+        // the shared TOFU client on first contact (no fingerprint yet).
+        let client = match &fingerprint {
+            Some(fp) => super::build_pinned_reqwest_client(fp)?,
+            None => self.client.clone(),
+        };
+
+        let res = client
             .post(&url)
             .header("Content-Type", "application/json")
             .body(serde_json::to_string(&payload)?)
             .send()
             .await?;
 
-        if protocol == ProtocolType::Https {
-            super::verify_cert_from_res(&res, public_key)?;
-        }
+        // No post-hoc cert check: when a fingerprint is supplied the handshake
+        // already pinned it; when not (TOFU) there is nothing to verify against.
 
         let status = res.status();
 
@@ -204,7 +210,7 @@ impl LsHttpClientV2 {
         protocol: ProtocolType,
         ip: &str,
         port: u16,
-        public_key: Option<String>,
+        fingerprint: Option<String>,
         session_id: &str,
         file_id: &str,
         token: &str,
@@ -227,11 +233,17 @@ impl LsHttpClientV2 {
         let stream = ReceiverStream::new(binary).map(Ok::<Vec<u8>, anyhow::Error>);
         let body = reqwest::Body::wrap_stream(stream);
 
-        let res = self.client.post(&url).body(body).send().await?;
+        // Pin the handshake to the known fingerprint so file bytes are never sent
+        // to a MITM. (See prepare_upload for the rationale.)
+        let client = match &fingerprint {
+            Some(fp) => super::build_pinned_reqwest_client(fp)?,
+            None => self.client.clone(),
+        };
 
-        if protocol == ProtocolType::Https {
-            super::verify_cert_from_res(&res, public_key)?;
-        }
+        let res = client.post(&url).body(body).send().await?;
+
+        // No post-hoc cert check: handshake-time pinning (when fingerprint is
+        // supplied) already verified the peer.
 
         if res.status() != StatusCode::OK {
             return res.into_error().await;
