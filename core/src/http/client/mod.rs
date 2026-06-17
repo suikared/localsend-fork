@@ -194,11 +194,30 @@ pub(super) fn build_pinned_reqwest_client(
         .with_no_client_auth();
 
     let client = reqwest::Client::builder()
-        .use_preconfigured_tls(Some(client_config))
+        // Pass the BARE ClientConfig, not Some(config): reqwest wraps it internally
+        // (`let tls = Some(tls)`) and downcasts to Option<ClientConfig>. Wrapping
+        // here too makes it Option<Option<_>> and yields "Unknown TLS backend".
+        .use_preconfigured_tls(client_config)
         .tls_info(true)
         .build()?;
 
     Ok(client)
+}
+
+#[cfg(test)]
+mod pinned_client_tests {
+    use super::*;
+
+    #[test]
+    fn build_pinned_reqwest_client_succeeds() {
+        let res = build_pinned_reqwest_client(
+            "0000000000000000000000000000000000000000000000000000000000000000",
+        );
+        match &res {
+            Ok(_) => {}
+            Err(e) => panic!("build_pinned_reqwest_client failed: {e:?}"),
+        }
+    }
 }
 
 /// Verifies the certificate from the response.
