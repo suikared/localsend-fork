@@ -225,6 +225,7 @@ class ReceiveController {
       server: server,
       pin: server.ref.read(settingsProvider).receivePin,
       pinAttempts: server.getState().pinAttempts,
+      pinLockedAt: server.getState().pinLockedAt,
       request: request,
     );
     if (!pinCorrect) {

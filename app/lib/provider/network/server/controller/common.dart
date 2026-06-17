@@ -15,37 +15,55 @@ import 'package:localsend_app/util/simple_server.dart';
 /// - `request.ip` is the TCP peer address from the socket
 ///   (`connectionInfo.remoteAddress`), not a parsed `X-Forwarded-For`, so it
 ///   cannot be spoofed by a header.
+/// - A correct PIN resets the client's failure history (no permanent shadow
+///   from old mistakes), and a lockout expires after [pinCooldown] instead of
+///   persisting for the lifetime of the server process.
 Future<bool> checkPin({
   required ServerUtils server,
   required String? pin,
   required Map<String, int> pinAttempts,
+  required Map<String, DateTime> pinLockedAt,
   required HttpRequest request,
+  DateTime Function() now = DateTime.now,
 }) async {
   if (pin != null) {
-    final attempts = pinAttempts[request.ip] ?? 0;
-    if (attempts >= 3) {
+    final ip = request.ip;
+    final attempts = pinAttempts[ip] ?? 0;
+
+    if (isWithinLockWindow(attempts: attempts, lockedAt: pinLockedAt[ip], now: now())) {
       await request.respondJson(429, message: 'Too many attempts.');
       return false;
+    }
+
+    // Cooldown elapsed (or legacy state with no recorded lock time) -> give the
+    // client a fresh set of attempts.
+    if (attempts >= maxPinAttempts) {
+      pinAttempts[ip] = 0;
+      pinLockedAt.remove(ip);
     }
 
     final requestPin = request.uri.queryParameters['pin'];
     final result = evaluatePinAttempt(
       configuredPin: pin,
       requestPin: requestPin,
-      attempts: attempts,
+      attempts: pinAttempts[ip] ?? 0,
     );
 
     if (!result.allowed) {
-      // Count every failure, including an empty/missing PIN.
-      pinAttempts[request.ip] = attempts + 1;
+      pinAttempts[ip] = result.newAttempts;
 
       if (result.locked) {
+        pinLockedAt[ip] = now();
         await request.respondJson(429, message: 'Too many attempts.');
         return false;
       }
       await request.respondJson(401, message: 'Invalid pin.');
       return false;
     }
+
+    // Allowed: evaluatePinAttempt already reports newAttempts == 0.
+    pinAttempts[ip] = 0;
+    pinLockedAt.remove(ip);
   }
 
   return true;

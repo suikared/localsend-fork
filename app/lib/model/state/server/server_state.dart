@@ -13,7 +13,8 @@ class ServerState with ServerStateMappable {
   final bool https;
   final ReceiveSessionState? session;
   final WebSendState? webSendState;
-  final Map<String, int> pinAttempts; // IP address -> attempts (won't be reset on session end)
+  final Map<String, int> pinAttempts; // IP address -> attempts (reset on success / after pinCooldown)
+  final Map<String, DateTime> pinLockedAt; // IP address -> when the lockout started
 
   const ServerState({
     required this.httpServer,
@@ -23,10 +24,11 @@ class ServerState with ServerStateMappable {
     required this.session,
     required this.webSendState,
     required this.pinAttempts,
+    required this.pinLockedAt,
   });
 
   @override
   String toString() {
-    return 'ServerState(alias: $alias, port: $port, https: $https, session: $session, webSendState: $webSendState, pinAttempts: $pinAttempts)';
+    return 'ServerState(alias: $alias, port: $port, https: $https, session: $session, webSendState: $webSendState, pinAttempts: $pinAttempts, pinLockedAt: $pinLockedAt)';
   }
 }

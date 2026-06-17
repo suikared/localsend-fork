@@ -20,6 +20,7 @@
 | **H4** | `app/lib/util/rhttp.dart:62` | 空文件上传时 `curr/total` 除零；`Content-Length` 缺失空指针 | 抽 `safeProgress(curr,total)` 纯函数，total=0 返回 1.0 | `app/test/unit/util/rhttp_progress_test.dart`（3 绿）|
 | **C1** | `common/lib/src/isolate/parent/actions.dart:245` | isolate 流错误路径只 `addError`，未 `cancel/close` → 订阅泄漏 + stream 永不结束 | 对称补 `subscription.cancel(); controller.close();` | private 函数不可独立测；靠 common 全测试守护无回归 |
 | **H6** | `app/lib/util/native/file_saver.dart:241,246` | `throw 'Path traversal detected'`（字符串）在 generic catch 中丢类型/栈 | 定义 `PathTraversalException implements Exception` | 现有 `file_saver_traversal_test.dart`（`throwsA(anything)`）守护，9 绿 |
+| **H2-sec** | `pin_guard.dart` / `common.dart` / `server_state.dart` / `web_send_state.dart` | PIN 计数跨会话永久累积、成功不归零、锁定后无恢复（"只错一次就锁"=历史累计） | `evaluatePinAttempt` 返回 `newAttempts`（成功=0 重置）；新增 `isWithinLockWindow` + `pinCooldown`(30s) TTL；`ServerState`/`WebSendState` 加 `pinLockedAt` | `pin_guard_test.dart` 新增 7 测试（成功重置/累计/TTL/legacy 解锁）；30 测试全绿 |
 
 > 注：C1 受测试可达性约束（`_convertResponseToStream` 文件私有、`IsolateConnector` 注入）无法低成本单测，标注为对称防御修复。
 
@@ -42,7 +43,7 @@
 | ID | 文件:行 | 问题 | 建议 |
 |---|---|---|---|
 | H1-sec | `receive_controller.dart:224` | PIN 仅在 prepareUpload 检查，upload/cancel/show 无 PIN | PIN 与 session 绑定，所有写状态端点基于"已过 PIN 的 session" |
-| H2-sec | `common.dart:25,40` + `server_state.dart:16` | PIN 锁定按 IP 计数：NAT 误伤、IPv6 /64 可绕过、无 TTL 无限累积 | 按 IP+fingerprint 联合计数 + TTL 衰减 + IPv6 /64 聚合 |
+| H2-sec | `common.dart:25,40` + `server_state.dart:16` | PIN 锁定按 IP 计数：NAT 误伤、IPv6 /64 可绕过、无 TTL 无限累积 | **核心已修**（成功重置 + 30s TTL，见 §1 H2-sec）；剩余：按 IP+fingerprint 联合计数 + IPv6 /64 聚合 |
 | H3-sec | `pin_guard.dart:14` | `constantTimeEquals` 长度差提前返回（长度泄露），注释自称恒定时间 | 先 HMAC-SHA256 再定长比较，或文档明确仅适用固定长度 PIN |
 | H4-sec | `receive_controller.dart:753` | `/show` 无来源 IP 限制，token 明文持久化，信任 body `args` 加载文件选择（SSRF/数据外泄） | `/show` 限定 loopback/本机网卡；args 白名单校验 |
 | H5-sec | `receive_controller.dart:188` + `multicast_discovery.dart:58` | 直接信任 body 声明的 fingerprint/alias（设备伪装/社工） | UI 展示前标注"未验证"，仅 TLS 握手证书指纹标"已验证" |

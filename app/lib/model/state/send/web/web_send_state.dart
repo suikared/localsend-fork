@@ -10,7 +10,8 @@ class WebSendState with WebSendStateMappable {
   final Map<String, WebSendFile> files; // file id as key
   final bool autoAccept; // automatically accept incoming requests
   final String? pin;
-  final Map<String, int> pinAttempts; // IP address -> attempts (will be reset on session end)
+  final Map<String, int> pinAttempts; // IP address -> attempts (reset on success / after pinCooldown)
+  final Map<String, DateTime> pinLockedAt; // IP address -> when the lockout started
 
   const WebSendState({
     required this.sessions,
@@ -18,10 +19,11 @@ class WebSendState with WebSendStateMappable {
     required this.autoAccept,
     required this.pin,
     required this.pinAttempts,
+    required this.pinLockedAt,
   });
 
   @override
   String toString() {
-    return 'WebSendState(sessions: $sessions, files: <${files.keys}>, autoAccept: $autoAccept, pin: $pin, pinAttempts: $pinAttempts)';
+    return 'WebSendState(sessions: $sessions, files: <${files.keys}>, autoAccept: $autoAccept, pin: $pin, pinAttempts: $pinAttempts, pinLockedAt: $pinLockedAt)';
   }
 }

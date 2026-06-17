@@ -151,6 +151,7 @@ class ServerService extends Notifier<ServerState?> {
       session: null,
       webSendState: null,
       pinAttempts: {},
+      pinLockedAt: {},
     );
 
     state = newServerState;

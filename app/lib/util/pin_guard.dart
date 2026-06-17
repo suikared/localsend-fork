@@ -1,11 +1,19 @@
 /// Pure, HTTP-free PIN-evaluation helpers.
 ///
 /// Extracted from `checkPin` so the security-critical logic (constant-time
-/// comparison, attempt counting) is unit-testable without faking `HttpRequest`.
+/// comparison, attempt counting, lock window) is unit-testable without faking
+/// `HttpRequest`.
 library;
 
+/// Number of failed attempts before a client is locked out.
+const int maxPinAttempts = 3;
+
+/// How long a client stays locked out after reaching [maxPinAttempts].
+/// After this elapses the counter resets and the client may retry.
+const Duration pinCooldown = Duration(seconds: 30);
+
 /// Result of evaluating a single PIN attempt.
-typedef PinAttemptResult = ({bool allowed, bool locked});
+typedef PinAttemptResult = ({bool allowed, bool locked, int newAttempts});
 
 /// Compares two strings in time independent of where (and whether) they differ.
 ///
@@ -25,8 +33,9 @@ bool constantTimeEquals(String a, String b) {
 /// Evaluates a PIN attempt against the configured PIN.
 ///
 /// [attempts] is the number of previously recorded failed attempts for this
-/// client. The caller is responsible for incrementing it on every rejection
-/// (including an empty/missing PIN) — see K7.
+/// client. Returns `newAttempts` so the caller can write back the exact next
+/// counter value — including `0` on success, which resets the client's history
+/// (a correct PIN clears prior failures).
 ///
 /// Returns `allowed: true` when no PIN is configured or the PIN matches.
 /// Returns `locked: true` when this failed attempt meets the lock threshold.
@@ -36,13 +45,30 @@ PinAttemptResult evaluatePinAttempt({
   required int attempts,
 }) {
   if (configuredPin == null) {
-    return (allowed: true, locked: false);
+    return (allowed: true, locked: false, newAttempts: 0);
   }
 
   if (constantTimeEquals(requestPin ?? '', configuredPin)) {
-    return (allowed: true, locked: false);
+    // Success resets the client's failure history.
+    return (allowed: true, locked: false, newAttempts: 0);
   }
 
-  // Threshold of 2 prior failures means this is the 3rd attempt → lock.
-  return (allowed: false, locked: attempts >= 2);
+  final newAttempts = attempts + 1;
+  return (allowed: false, locked: newAttempts >= maxPinAttempts, newAttempts: newAttempts);
+}
+
+/// Whether a client that has reached the attempt threshold is still inside the
+/// cooldown window and must be rejected with 429.
+///
+/// [lockedAt] is when the lock took effect. A null [lockedAt] means the lock
+/// time is unknown (e.g. state accumulated before this field existed): treat it
+/// as elapsed so legacy clients are not permanently locked until process restart.
+bool isWithinLockWindow({
+  required int attempts,
+  required DateTime? lockedAt,
+  required DateTime now,
+}) {
+  if (attempts < maxPinAttempts) return false;
+  if (lockedAt == null) return false;
+  return now.difference(lockedAt) < pinCooldown;
 }

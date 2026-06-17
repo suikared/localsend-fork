@@ -116,6 +116,7 @@ class SendController {
         server: server,
         pin: state.webSendState!.pin,
         pinAttempts: state.webSendState!.pinAttempts,
+        pinLockedAt: state.webSendState!.pinLockedAt,
         request: request,
       );
       if (!pinCorrect) {
@@ -285,6 +286,7 @@ class SendController {
       autoAccept: server.ref.read(settingsProvider).shareViaLinkAutoAccept,
       pin: null,
       pinAttempts: {},
+      pinLockedAt: {},
     );
 
     server.setState(

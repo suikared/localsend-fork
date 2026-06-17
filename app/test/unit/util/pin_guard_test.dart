@@ -70,4 +70,55 @@ void main() {
       expect(result.locked, isTrue);
     });
   });
+
+  group('evaluatePinAttempt attempt accounting', () {
+    test('resets newAttempts to 0 on success', () {
+      final result = evaluatePinAttempt(configuredPin: '1234', requestPin: '1234', attempts: 5);
+      expect(result.allowed, isTrue);
+      expect(result.newAttempts, 0);
+    });
+
+    test('increments newAttempts on failure', () {
+      final result = evaluatePinAttempt(configuredPin: '1234', requestPin: '0000', attempts: 1);
+      expect(result.allowed, isFalse);
+      expect(result.newAttempts, 2);
+    });
+
+    test('increments newAttempts on empty PIN failure', () {
+      final result = evaluatePinAttempt(configuredPin: '1234', requestPin: null, attempts: 0);
+      expect(result.newAttempts, 1);
+    });
+  });
+
+  group('isWithinLockWindow', () {
+    final t0 = DateTime(2026, 1, 1, 0, 0, 0);
+
+    test('false below threshold', () {
+      expect(isWithinLockWindow(attempts: 2, lockedAt: null, now: t0), isFalse);
+    });
+
+    test('true when locked and within cooldown', () {
+      expect(
+        isWithinLockWindow(attempts: 3, lockedAt: t0, now: t0.add(const Duration(seconds: 10))),
+        isTrue,
+      );
+    });
+
+    test('false when cooldown elapsed', () {
+      expect(
+        isWithinLockWindow(
+          attempts: 3,
+          lockedAt: t0,
+          now: t0.add(pinCooldown).add(const Duration(seconds: 1)),
+        ),
+        isFalse,
+      );
+    });
+
+    test('false at threshold with no lock time (legacy accumulated state -> unlock)', () {
+      // A device that hit the threshold before pinLockedAt existed must be
+      // allowed to retry, otherwise the lock is permanent until process restart.
+      expect(isWithinLockWindow(attempts: 5, lockedAt: null, now: t0), isFalse);
+    });
+  });
 }

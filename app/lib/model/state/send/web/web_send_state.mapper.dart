@@ -43,6 +43,9 @@ class WebSendStateMapper extends ClassMapperBase<WebSendState> {
     'pinAttempts',
     _$pinAttempts,
   );
+  static Map<String, DateTime> _$pinLockedAt(WebSendState v) => v.pinLockedAt;
+  static const Field<WebSendState, Map<String, DateTime>> _f$pinLockedAt =
+      Field('pinLockedAt', _$pinLockedAt);
 
   @override
   final MappableFields<WebSendState> fields = const {
@@ -51,6 +54,7 @@ class WebSendStateMapper extends ClassMapperBase<WebSendState> {
     #autoAccept: _f$autoAccept,
     #pin: _f$pin,
     #pinAttempts: _f$pinAttempts,
+    #pinLockedAt: _f$pinLockedAt,
   };
 
   static WebSendState _instantiate(DecodingData data) {
@@ -60,6 +64,7 @@ class WebSendStateMapper extends ClassMapperBase<WebSendState> {
       autoAccept: data.dec(_f$autoAccept),
       pin: data.dec(_f$pin),
       pinAttempts: data.dec(_f$pinAttempts),
+      pinLockedAt: data.dec(_f$pinLockedAt),
     );
   }
 
@@ -140,12 +145,15 @@ abstract class WebSendStateCopyWith<$R, $In extends WebSendState, $Out>
   >
   get files;
   MapCopyWith<$R, String, int, ObjectCopyWith<$R, int, int>> get pinAttempts;
+  MapCopyWith<$R, String, DateTime, ObjectCopyWith<$R, DateTime, DateTime>>
+  get pinLockedAt;
   $R call({
     Map<String, WebSendSession>? sessions,
     Map<String, WebSendFile>? files,
     bool? autoAccept,
     String? pin,
     Map<String, int>? pinAttempts,
+    Map<String, DateTime>? pinLockedAt,
   });
   WebSendStateCopyWith<$R2, $In, $Out2> $chain<$R2, $Out2>(Then<$Out2, $R2> t);
 }
@@ -190,12 +198,20 @@ class _WebSendStateCopyWithImpl<$R, $Out>
         (v) => call(pinAttempts: v),
       );
   @override
+  MapCopyWith<$R, String, DateTime, ObjectCopyWith<$R, DateTime, DateTime>>
+  get pinLockedAt => MapCopyWith(
+    $value.pinLockedAt,
+    (v, t) => ObjectCopyWith(v, $identity, t),
+    (v) => call(pinLockedAt: v),
+  );
+  @override
   $R call({
     Map<String, WebSendSession>? sessions,
     Map<String, WebSendFile>? files,
     bool? autoAccept,
     Object? pin = $none,
     Map<String, int>? pinAttempts,
+    Map<String, DateTime>? pinLockedAt,
   }) => $apply(
     FieldCopyWithData({
       if (sessions != null) #sessions: sessions,
@@ -203,6 +219,7 @@ class _WebSendStateCopyWithImpl<$R, $Out>
       if (autoAccept != null) #autoAccept: autoAccept,
       if (pin != $none) #pin: pin,
       if (pinAttempts != null) #pinAttempts: pinAttempts,
+      if (pinLockedAt != null) #pinLockedAt: pinLockedAt,
     }),
   );
   @override
@@ -212,6 +229,7 @@ class _WebSendStateCopyWithImpl<$R, $Out>
     autoAccept: data.get(#autoAccept, or: $value.autoAccept),
     pin: data.get(#pin, or: $value.pin),
     pinAttempts: data.get(#pinAttempts, or: $value.pinAttempts),
+    pinLockedAt: data.get(#pinLockedAt, or: $value.pinLockedAt),
   );
 
   @override
