@@ -21,6 +21,8 @@
 | **C1** | `common/lib/src/isolate/parent/actions.dart:245` | isolate 流错误路径只 `addError`，未 `cancel/close` → 订阅泄漏 + stream 永不结束 | 对称补 `subscription.cancel(); controller.close();` | private 函数不可独立测；靠 common 全测试守护无回归 |
 | **H6** | `app/lib/util/native/file_saver.dart:241,246` | `throw 'Path traversal detected'`（字符串）在 generic catch 中丢类型/栈 | 定义 `PathTraversalException implements Exception` | 现有 `file_saver_traversal_test.dart`（`throwsA(anything)`）守护，9 绿 |
 | **H2-sec** | `pin_guard.dart` / `common.dart` / `server_state.dart` / `web_send_state.dart` | PIN 计数跨会话永久累积、成功不归零、锁定后无恢复（"只错一次就锁"=历史累计） | `evaluatePinAttempt` 返回 `newAttempts`（成功=0 重置）；新增 `isWithinLockWindow` + `pinCooldown`(30s) TTL；`ServerState`/`WebSendState` 加 `pinLockedAt` | `pin_guard_test.dart` 新增 7 测试（成功重置/累计/TTL/legacy 解锁）；30 测试全绿 |
+| **C1-sec（PIN 路径）** | `core/src/http/client/v2.rs`、`core/src/http/client/mod.rs`、`core/src/crypto/pinned_server_cert_verifier.rs`、`app/lib/provider/network/send_provider.dart` | 真正 PIN 路径在 Rust `LsHttpClientV2`：`danger_accept_invalid_certs(true)` 握手放行任意证书；事后公钥校验又被 Dart `publicKey:null`（旧 TODO）置空 → PIN（query 明文）在事后校验前已发给 MITM | 新增 `PinnedServerCertVerifier`（impl `rustls::client::danger::ServerCertVerifier`）握手期 pin 到 `SHA-256(DER)`=指纹，复用 `verify_cert_from_der` 时效+签名校验；`build_pinned_reqwest_client` 经 reqwest `use_preconfigured_tls(Some(ClientConfig))` 注入；`prepare_upload` 握手期即拒失配证书；`send_provider` 传 `target.fingerprint` | `core/src/crypto/pinned_server_cert_verifier.rs` 6 单测（匹配/失配/大小写冒号归一/TOFU/过期/同值），20 lib 测试全绿 |
+
 
 > 注：C1 受测试可达性约束（`_convertResponseToStream` 文件私有、`IsolateConnector` 注入）无法低成本单测，标注为对称防御修复。
 
@@ -32,7 +34,8 @@
 
 | ID | 文件:行 | 问题 | 建议 |
 |---|---|---|---|
-| **C1-sec** | `app/lib/util/rhttp.dart:77` | 发送端 `verifyCertificates: false`，MITM 可拦截 prepareUpload/upload（PIN 走 query 明文） | 默认启用证书校验并 pin 到对端 fingerprint，仅首次未信任设备降级到用户确认 |
+| **C1-sec**（PIN 路径已修，文件内容留后续） | 真正 PIN 路径在 Rust `core/src/http/client/v2.rs`（非 `rhttp.dart`）：`danger_accept_invalid_certs(true)` 握手期放行任意证书；事后 `verify_cert_from_res` 又被 Dart 永远传 `publicKey:null`（`send_provider.dart:156` 旧 TODO）置空。PIN 走 prepareUpload query、文件字节走 upload body，均在事后校验前已发出 | **PIN 已修**（见 §1）：新增 `PinnedServerCertVerifier` 握手期 pin 到 `SHA-256(DER)`（= `Device.fingerprint`），reqwest 经 `use_preconfigured_tls` 注入；`prepareUpload` 传 `target.fingerprint`。**文件内容未修**：上传走 isolate rhttp（无法 pin），见 C1-sec-file |
+| **C1-sec-file**（新增，用户决策 C 留后续） | `common/lib/src/task/upload/http_upload.dart` → rhttp `verifyCertificates:false`。文件字节经 isolate rhttp 上传，rhttp 无法注入自定义校验器，MITM 可被动读取文件内容 | A：上传改走 Rust `RsHttpClient.upload`（已 pin），弃 isolate rhttp；或 B：isolate 新增 dart:io pinning `CustomHttpClient`（`badCertificateCallback` 复用 `calculateHashOfCertificate` + host→fingerprint 注册表） |
 | **C2-sec** | `receive_controller.dart:461` | prepareUpload 回显完整 sessionId + 全部 file token，无 PIN 时 LAN 任意主机可抢会话拿 token | token 仅在用户接受后下发；prepareUpload 只返回 sessionId |
 | **C3-sec** | `receive_controller.dart:497,503` | v1 `/upload` 不校验 sessionId，仅 fileId+token；token 一旦泄露可越权写入 | v1 也把 token 绑定到当前 session；token 随 session 结束失效 |
 | **C4-sec** | `receive_controller.dart:540` | `/upload` 不校验声明文件大小，可流式写入超大数据耗尽磁盘 | 校验 `Content-Length <= 声明 size + 容差`，超限返回 413 |
