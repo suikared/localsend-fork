@@ -46,6 +46,7 @@ import 'package:localsend_app/util/native/tray_helper.dart';
 import 'package:localsend_app/util/rust.dart';
 import 'package:localsend_app/util/security_helper.dart';
 import 'package:localsend_app/util/simple_server.dart';
+import 'package:localsend_app/util/upload_size_guard.dart';
 import 'package:localsend_app/widget/dialogs/open_file_dialog.dart';
 import 'package:logging/logging.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -57,6 +58,14 @@ import 'package:window_manager/window_manager.dart';
 const _uuid = Uuid();
 
 final _logger = Logger('ReceiveController');
+
+/// C4-sec: a declared file size is allowed this much slack before an /upload
+/// stream is rejected as oversized. Honest peers send exactly `size` bytes; the
+/// slack only absorbs framing/stat drift. It is far too small to matter for a
+/// disk-exhaustion attack, which over-sends by orders of magnitude.
+// ponytail: fixed tolerance, not a setting — make configurable if a transport
+// ever legitimately pads bodies beyond this.
+const _uploadSizeToleranceBytes = 1024;
 
 /// Returns the SHA-256(DER) hash of the peer's TLS certificate, or null when
 /// the connection is not HTTPS or the peer did not present a certificate.
@@ -543,7 +552,10 @@ class ReceiveController {
         fileName: receivingFile.desiredName!,
         saveToGallery: shouldSaveToGallery,
         isImage: fileType == FileType.image,
-        stream: request,
+        stream: capUploadStream(
+          request,
+          receivingFile.file.size + _uploadSizeToleranceBytes,
+        ),
         onProgress: (savedBytes) {
           if (receivingFile.file.size != 0) {
             server.ref
@@ -593,6 +605,23 @@ class ReceiveController {
           );
 
       _logger.info('Saved ${receivingFile.file.fileName}.');
+    } on OversizedUploadException catch (e) {
+      // C4-sec: peer streamed more bytes than it declared (declared size +
+      // tolerance). Abort the transfer and reject with 413 so disk cannot be
+      // exhausted by an oversized body.
+      server.setState(
+        (oldState) => oldState?.copyWith(
+          session: oldState.session?.fileFinished(
+            fileId: fileId,
+            status: FileStatus.failed,
+            path: null,
+            savedToGallery: false,
+            errorMessage: 'Upload exceeded declared size',
+          ),
+        ),
+      );
+      _logger.warning('Rejected oversized upload for $fileId', e);
+      return await request.respondJson(413, message: 'Upload exceeds declared file size');
     } catch (e, st) {
       server.setState(
         (oldState) => oldState?.copyWith(
