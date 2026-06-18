@@ -178,9 +178,12 @@ class SettingsService extends PureNotifier<SettingsState> {
   }
 
   Future<void> setReceivePin(String? receivePin) async {
+    // receivePin is the plaintext from the UI; persistence hashes it. The state
+    // holds the resulting record string (never the plaintext) so that PIN
+    // verification downstream works against the record.
     await _persistence.setReceivePin(receivePin);
     state = state.copyWith(
-      receivePin: receivePin,
+      receivePin: _persistence.getReceivePin(),
     );
   }
 

@@ -5,6 +5,8 @@
 /// `HttpRequest`.
 library;
 
+import 'package:localsend_app/util/pin_storage.dart';
+
 /// Number of failed attempts before a client is locked out.
 const int maxPinAttempts = 3;
 
@@ -32,6 +34,10 @@ bool constantTimeEquals(String a, String b) {
 
 /// Evaluates a PIN attempt against the configured PIN.
 ///
+/// [configuredPin] is the **encoded PBKDF2 record string** for the configured
+/// PIN (see `pin_storage.dart`), or null when no PIN is set. It is never the
+/// plaintext PIN — the plaintext is not persisted.
+///
 /// [attempts] is the number of previously recorded failed attempts for this
 /// client. Returns `newAttempts` so the caller can write back the exact next
 /// counter value — including `0` on success, which resets the client's history
@@ -48,7 +54,11 @@ PinAttemptResult evaluatePinAttempt({
     return (allowed: true, locked: false, newAttempts: 0);
   }
 
-  if (constantTimeEquals(requestPin ?? '', configuredPin)) {
+  final record = PinHashRecord.tryDecode(configuredPin);
+  // A non-null configuredPin that does not decode is treated as a mismatch
+  // (refuse-closed): it should not occur post-migration, but we never grant
+  // access on an unrecognized credential shape.
+  if (record != null && verifyPin(requestPin, record)) {
     // Success resets the client's failure history.
     return (allowed: true, locked: false, newAttempts: 0);
   }

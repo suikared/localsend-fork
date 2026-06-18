@@ -1,5 +1,11 @@
 import 'package:localsend_app/util/pin_guard.dart';
+import 'package:localsend_app/util/pin_storage.dart';
 import 'package:test/test.dart';
+
+// Encoded PBKDF2 record for the PIN "1234" (low iterations keep the suite fast;
+// production uses kPinHashIterations). evaluatePinAttempt now takes the record
+// string, not the plaintext PIN.
+final String _pin1234 = hashPin('1234', iterations: 1000).encode();
 
 void main() {
   group('constantTimeEquals', () {
@@ -40,18 +46,18 @@ void main() {
     });
 
     test('allows correct PIN', () {
-      final result = evaluatePinAttempt(configuredPin: '1234', requestPin: '1234', attempts: 1);
+      final result = evaluatePinAttempt(configuredPin: _pin1234, requestPin: '1234', attempts: 1);
       expect(result.allowed, isTrue);
     });
 
     test('rejects wrong PIN and does not lock before threshold', () {
-      final result = evaluatePinAttempt(configuredPin: '1234', requestPin: '0000', attempts: 0);
+      final result = evaluatePinAttempt(configuredPin: _pin1234, requestPin: '0000', attempts: 0);
       expect(result.allowed, isFalse);
       expect(result.locked, isFalse);
     });
 
     test('locks on the third failed attempt (attempts == 2)', () {
-      final result = evaluatePinAttempt(configuredPin: '1234', requestPin: '0000', attempts: 2);
+      final result = evaluatePinAttempt(configuredPin: _pin1234, requestPin: '0000', attempts: 2);
       expect(result.allowed, isFalse);
       expect(result.locked, isTrue);
     });
@@ -59,13 +65,13 @@ void main() {
     test('counts an empty PIN as a failed attempt (K7 fix)', () {
       // The caller now increments the attempt counter for *every* rejection,
       // including an empty/missing PIN, so this must still be rejected.
-      final result = evaluatePinAttempt(configuredPin: '1234', requestPin: null, attempts: 0);
+      final result = evaluatePinAttempt(configuredPin: _pin1234, requestPin: null, attempts: 0);
       expect(result.allowed, isFalse);
       expect(result.locked, isFalse);
     });
 
     test('empty PIN at threshold locks (no infinite probing)', () {
-      final result = evaluatePinAttempt(configuredPin: '1234', requestPin: '', attempts: 2);
+      final result = evaluatePinAttempt(configuredPin: _pin1234, requestPin: '', attempts: 2);
       expect(result.allowed, isFalse);
       expect(result.locked, isTrue);
     });
@@ -73,19 +79,19 @@ void main() {
 
   group('evaluatePinAttempt attempt accounting', () {
     test('resets newAttempts to 0 on success', () {
-      final result = evaluatePinAttempt(configuredPin: '1234', requestPin: '1234', attempts: 5);
+      final result = evaluatePinAttempt(configuredPin: _pin1234, requestPin: '1234', attempts: 5);
       expect(result.allowed, isTrue);
       expect(result.newAttempts, 0);
     });
 
     test('increments newAttempts on failure', () {
-      final result = evaluatePinAttempt(configuredPin: '1234', requestPin: '0000', attempts: 1);
+      final result = evaluatePinAttempt(configuredPin: _pin1234, requestPin: '0000', attempts: 1);
       expect(result.allowed, isFalse);
       expect(result.newAttempts, 2);
     });
 
     test('increments newAttempts on empty PIN failure', () {
-      final result = evaluatePinAttempt(configuredPin: '1234', requestPin: null, attempts: 0);
+      final result = evaluatePinAttempt(configuredPin: _pin1234, requestPin: null, attempts: 0);
       expect(result.newAttempts, 1);
     });
   });

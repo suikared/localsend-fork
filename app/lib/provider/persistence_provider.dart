@@ -17,6 +17,7 @@ import 'package:localsend_app/util/alias_generator.dart';
 import 'package:localsend_app/util/native/autostart_helper.dart';
 import 'package:localsend_app/util/native/context_menu_helper.dart';
 import 'package:localsend_app/util/native/platform_check.dart';
+import 'package:localsend_app/util/pin_storage.dart';
 import 'package:localsend_app/util/security_helper.dart';
 import 'package:localsend_app/util/shared_preferences/shared_preferences_file.dart';
 import 'package:localsend_app/util/shared_preferences/shared_preferences_portable.dart';
@@ -428,6 +429,8 @@ class PersistenceService {
   }
 
   String? getReceivePin() {
+    // Returns the encoded PBKDF2 record string (never the plaintext PIN).
+    // Legacy plaintext values are migrated to a record at init via _migrate3.
     return _prefs.getString(_receivePin);
   }
 
@@ -435,7 +438,8 @@ class PersistenceService {
     if (pin == null) {
       await _prefs.remove(_receivePin);
     } else {
-      await _prefs.setString(_receivePin, pin);
+      // pin is the plaintext from the UI (trust boundary); hash before persist.
+      await _prefs.setString(_receivePin, hashPin(pin).encode());
     }
   }
 
