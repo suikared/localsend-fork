@@ -62,7 +62,7 @@ void main() {
 
   setUp(() {
     client = _RecordingClient();
-    service = HttpUploadService(client);
+    service = HttpUploadService((_) => client);
   });
 
   test('upload query carries sessionId when remoteSessionId is present', () async {
