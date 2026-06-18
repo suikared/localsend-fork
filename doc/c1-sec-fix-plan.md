@@ -57,6 +57,8 @@ PIN pinning 已断掉主动攻击链（凭据窃取 → 发方冒充 → 恶意�
 - A：上传改走 Rust `RsHttpClient.upload`（已 pin），弃 isolate rhttp 上传。
 - B：isolate 新增 dart:io pinning `CustomHttpClient`（`badCertificateCallback` 复用 `calculateHashOfCertificate` + host→fingerprint 注册表）。
 
+**2026-06-18 已修（方案 B）：** 新增 `common/lib/src/task/upload/pinned_upload_client.dart`——上传改走 dart:io `HttpClient`，`badCertificateCallback` 计算 `SHA-256(cert.der)` 与 `target.fingerprint` 常量时间比对（冒号/大小写归一），失配握手即拒；mTLS 客户端证书复用 `StoredSecurityContext`。`HttpUploadService` 改工厂注入、每上传一例 pinned client。纯函数 `fingerprintOfCertDer`/`fingerprintMatches` 6 单测守护（`common/test/unit/security/pinned_upload_client_test.dart`）。端到端 TLS 握手手动验证见报告 §4。
+
 ## 风险
 
 - PIN 路径现严格校验证书（时效+签名+指纹），此前接受任意证书。与证书时效异常/非标准自签的对端可能握手失败（LocalSend 自签证书正常，不受影响）。

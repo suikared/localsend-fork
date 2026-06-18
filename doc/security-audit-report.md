@@ -7,7 +7,7 @@
 | 门禁 | 结果 |
 |---|---|
 | `dart analyze`（app + common） | ✅ 0 error |
-| 安全/回归测试 | ✅ 全绿（session_binding 2、safeProgress 3、traversal 9、common 全 11、upload_size_guard 4） |
+| 安全/回归测试 | ✅ 全绿（session_binding 2、safeProgress 3、traversal 9、common 全 16、upload_size_guard 4、pin_storage 10、pinned_upload_client 6） |
 | 密钥扫描 `secret_scan.ps1` | ✅ CLEAN |
 | 已修项回归 | ✅ 无回归 |
 
@@ -23,6 +23,8 @@
 | **H2-sec** | `pin_guard.dart` / `common.dart` / `server_state.dart` / `web_send_state.dart` | PIN 计数跨会话永久累积、成功不归零、锁定后无恢复（"只错一次就锁"=历史累计） | `evaluatePinAttempt` 返回 `newAttempts`（成功=0 重置）；新增 `isWithinLockWindow` + `pinCooldown`(30s) TTL；`ServerState`/`WebSendState` 加 `pinLockedAt` | `pin_guard_test.dart` 新增 7 测试（成功重置/累计/TTL/legacy 解锁）；30 测试全绿 |
 | **C1-sec（PIN 路径）** | `core/src/http/client/v2.rs`、`core/src/http/client/mod.rs`、`core/src/crypto/pinned_server_cert_verifier.rs`、`app/lib/provider/network/send_provider.dart` | 真正 PIN 路径在 Rust `LsHttpClientV2`：`danger_accept_invalid_certs(true)` 握手放行任意证书；事后公钥校验又被 Dart `publicKey:null`（旧 TODO）置空 → PIN（query 明文）在事后校验前已发给 MITM | 新增 `PinnedServerCertVerifier`（impl `rustls::client::danger::ServerCertVerifier`）握手期 pin 到 `SHA-256(DER)`=指纹，复用 `verify_cert_from_der` 时效+签名校验；`build_pinned_reqwest_client` 经 reqwest `use_preconfigured_tls(bare ClientConfig)` 注入；`prepare_upload` 握手期即拒失配证书；`send_provider` 传 `target.fingerprint` | `core/src/crypto/pinned_server_cert_verifier.rs` 6 单测（匹配/失配/大小写冒号归一/TOFU/过期/同值），core lib 测试全绿 |
 | **C4-sec** | `app/lib/provider/network/server/controller/receive_controller.dart`（`_uploadHandler`）、`app/lib/util/upload_size_guard.dart` | `/upload` 裸吃 request 流无字节上限，对端声明 `size:N` 却流式灌远超字节 → 磁盘耗尽 DoS；仅查 `Content-Length` 可被 chunked 传输绕过 | 纯函数 `capUploadStream(source, maxBytes)` 流级硬上限：累计字节超 cap 即抛 `OversizedUploadException`；`_uploadHandler` 用 `capUploadStream(request, file.size + 1024)` 包裹流，捕获 → 文件标 failed + **响应 413** | `app/test/unit/security/upload_size_guard_test.dart`（`@Tags security`，4 绿：边界=放行 / 低于=放行 / 超限抛错且累计字节≤cap / 单块超cap即拒） |
+| **C5-sec** | `app/lib/util/pin_storage.dart`、`app/lib/provider/persistence_provider(_migrations).dart`、`app/lib/util/pin_guard.dart`、`app/lib/provider/settings_provider.dart` | 接收 PIN 明文存 SharedPreferences，root/备份可直读原值 | 纯函数 PBKDF2-HMAC-SHA256（`hashPin`/`verifyPin`/`PinHashRecord`，迭代 250000，盐 16B `Random.secure()`）；`setReceivePin` 写入前哈希、`getReceivePin` 仅返记录串；`evaluatePinAttempt` 比对改走 `verifyPin`；迁移 v3 自动把遗留明文重哈希（不锁死老用户） | `app/test/unit/security/pin_storage_test.dart`（`@Tags security`，10 绿：正/误 PIN、盐随机、记录编解码、遗留明文识别、明文不外泄）+ `pin_guard_test.dart` fixture 改记录串全绿 |
+| **C1-sec-file** | `common/lib/src/task/upload/pinned_upload_client.dart`、`common/lib/src/task/upload/http_upload.dart` | 文件字节经 isolate rhttp 上传（`verifyCertificates:false`），rhttp 无指纹校验回调，LAN MITM 可被动读取上传文件内容 | 上传改走 dart:io `HttpClient`，`badCertificateCallback` 计算 `fingerprintMatches(cert.der, target.fingerprint)`（SHA-256(DER) 大写 hex，冒号/大小写归一 + 常量时间比较），失配握手即拒；mTLS 客户端证书复用 `StoredSecurityContext`；`HttpUploadService` 工厂注入，每上传一例 pinned client | `common/test/unit/security/pinned_upload_client_test.dart`（`@Tags security`，6 绿：指纹=标准哈希、精确/小写/带冒号匹配、失配/空值拒绝）；端到端 TLS 握手见 §4 手动 |
 
 
 > 注：C1 受测试可达性约束（`_convertResponseToStream` 文件私有、`IsolateConnector` 注入）无法低成本单测，标注为对称防御修复。
@@ -45,7 +47,8 @@
 | **C1-sec-file**（新增，用户决策 C 留后续） | `common/lib/src/task/upload/http_upload.dart` → rhttp `verifyCertificates:false`。文件字节经 isolate rhttp 上传，rhttp 无法注入自定义校验器，MITM 可被动读取文件内容 | A：上传改走 Rust `RsHttpClient.upload`（已 pin），弃 isolate rhttp；或 B：isolate 新增 dart:io pinning `CustomHttpClient`（`badCertificateCallback` 复用 `calculateHashOfCertificate` + host→fingerprint 注册表） |
 | ~~C2-sec~~ | ~~`receive_controller.dart:461`~~ | ~~prepareUpload 回显完整 sessionId + 全部 file token，无 PIN 时 LAN 任意主机可抢会话拿 token~~ | ✅ **已缓解，无需改**：token 仅在用户接受后下发（见 §1 结论），接纳前不泄露 |
 | ~~C3-sec~~ | ~~`receive_controller.dart:497,503`~~ | ~~v1 `/upload` 不校验 sessionId，仅 fileId+token；token 一旦泄露可越权写入~~ | ✅ **已缓解，无需改**：v1 有 IP 绑定 + token 必属当前会话双重覆盖（见 §1 结论） |
-| **C5-sec** | `persistence_provider.dart:438` | PIN 明文存 SharedPreferences，root/备份可直读 | 改 `flutter_secure_storage` + 盐值哈希 |
+| ~~C5-sec~~ | ~~`persistence_provider.dart:438`~~ | ~~PIN 明文存 SharedPreferences，root/备份可直读~~ | ✅ **已修**（见 §1）：PBKDF2 哈希存储 + 迁移 v3，shared_prefs 不再见明文 |
+| ~~C1-sec-file~~ | ~~`common/lib/src/task/upload/http_upload.dart` → rhttp~~ | ~~文件字节经 isolate rhttp 上传（`verifyCertificates:false`），MITM 可被动读取~~ | ✅ **已修**（见 §1）：上传改 dart:io pinned client，握手期 pin 到 `target.fingerprint` |
 
 ### HIGH
 
@@ -86,10 +89,10 @@ L1-sf PIN 校验前未消费 body｜L2-sf `/show` 总返回 200｜L3-sf `parent_
 
 1. 攻击者入同 LAN，UDP 多播嗅探受害者 alias/fingerprint（H5-sec，未修）
 2. ~~默认无 PIN → prepareUpload 拿 sessionId + 全部 token（C2-sec）~~ → **已缓解**：token 接纳后才下发
-3. ~~v1 `/upload` 越权写文件（C3-sec）~~ → **已缓解**：IP 绑定 + token 必属当前会话；~~大小不校验耗尽磁盘（C4-sec）~~ → **已修**：流级 cap + 413
+3. ~~v1 `/upload` 越权写文件（C3-sec）~~ → **已缓解**：IP 绑定 + token 必属当前会话；~~大小不校验耗尽磁盘（C4-sec）~~ → **已修**：流级 cap + 413；~~MITM 被动窃听上传文件内容（C1-sec-file）~~ → **已修**：上传握手期 pin 到对端指纹
 4. `/show` 唤起窗口塞恶意脚本路径（H4-sec，未修）
 
-> 链 2/3 已断（C2/C3 缓解 + C4 修复）；剩余关键节点 H5-sec（设备伪装）、H4-sec（`/show` SSRF）。
+> 链 2/3 已断（C2/C3 缓解 + C4 修复 + C1-sec-file 上传 pin）；剩余关键节点 H5-sec（设备伪装）、H4-sec（`/show` SSRF）。
 
 ---
 
@@ -121,4 +124,4 @@ L1-sf PIN 校验前未消费 body｜L2-sf `/show` 总返回 200｜L3-sf `parent_
 
 ## 7. 下一步建议
 
-复合攻击链的 C2/C3 已缓解、C4 已修；剩余 **C1-sec-file**（文件内容机密性，需协议层决策 A/B）、**C5-sec**（PIN 明文存储）、**H4-sec**（`/show` SSRF）、**H5-sec**（设备伪装）为优先项。可逐项用 `/vuln-triage` 转 TDD 红测试再修。
+复合攻击链的 C2/C3 已缓解、C4 已修、**C5-sec（PIN 哈希存储）与 C1-sec-file（上传 TLS 指纹 pin）本轮已修**——CRITICAL backlog 清空。剩余 HIGH 优先项：**H4-sec**（`/show` SSRF）、**H5-sec**（设备伪装）、H1/H3/H6-sec 及静默失败族（H2-sf/H3-sf/H5-sf）。可逐项用 `/vuln-triage` 转 TDD 红测试再修。
